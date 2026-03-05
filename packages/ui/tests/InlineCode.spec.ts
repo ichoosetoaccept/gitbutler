@@ -1,7 +1,7 @@
 import InlineCodeTestWrapper from "./InlineCodeTestWrapper.svelte";
 import { getTextContent, waitForTextContent, waitForTestId } from "./test-utils";
 import { test, expect } from "@playwright/experimental-ct-svelte";
-import type { Locator } from "playwright";
+import type { Locator, Page } from "playwright";
 
 async function getInlineCodeCount(component: Locator): Promise<number> {
 	const text = await component.getByTestId("inline-code-count").textContent();
@@ -14,6 +14,29 @@ async function waitForInlineCodeCount(
 	timeout = 2000,
 ): Promise<void> {
 	await waitForTestId(component, "inline-code-count", expectedCount, timeout);
+}
+
+/**
+ * Set the browser cursor inside a text node found via CSS selector.
+ * The selector should target the element containing the text node (its firstChild is used).
+ */
+async function setCursorAt(page: Page, parentSelector: string, offset: number): Promise<void> {
+	await page.evaluate(
+		({ parentSelector, offset }) => {
+			const editor = document.querySelector('[contenteditable="true"]');
+			if (!editor) return;
+			const parent = editor.querySelector(parentSelector);
+			const textNode = parent?.firstChild;
+			if (!textNode) return;
+			const range = document.createRange();
+			range.setStart(textNode, offset);
+			range.collapse(true);
+			const sel = window.getSelection();
+			sel?.removeAllRanges();
+			sel?.addRange(range);
+		},
+		{ parentSelector, offset },
+	);
 }
 
 test.describe("InlineCode", () => {
@@ -236,6 +259,67 @@ test.describe("InlineCode", () => {
 
 		const codeElement = editorWrapper.locator("code.inline-code");
 		await expect(codeElement).toBeVisible();
+	});
+
+	test("should move inline code to new paragraph when pressing Enter before it", async ({
+		mount,
+		page,
+	}) => {
+		const component = await mount(InlineCodeTestWrapper, {
+			props: { initialText: "" },
+		});
+
+		await component.getByTestId("focus-button").click();
+
+		const editorWrapper = component.getByTestId("editor-wrapper");
+		const contentEditable = editorWrapper.locator('[contenteditable="true"]').first();
+		await contentEditable.click();
+
+		await page.keyboard.type("before `code` after");
+		await waitForInlineCodeCount(component, 1);
+
+		// Position cursor at end of "before " (offset 7), right before the inline code
+		await setCursorAt(page, "p > :first-child", 7);
+		await page.keyboard.press("Enter");
+		await page.waitForTimeout(200);
+
+		await waitForInlineCodeCount(component, 1);
+
+		// Separator whitespace discarded — inline code and trailing text move to line 2
+		const paragraphs = contentEditable.locator("p");
+		expect(await paragraphs.nth(0).textContent()).toBe("before");
+		expect(await paragraphs.nth(1).textContent()).toContain("`code`");
+		expect(await paragraphs.nth(1).textContent()).toContain("after");
+	});
+
+	test("should preserve inline code when pressing Enter with cursor inside it", async ({
+		mount,
+		page,
+	}) => {
+		const component = await mount(InlineCodeTestWrapper, {
+			props: { initialText: "" },
+		});
+
+		await component.getByTestId("focus-button").click();
+
+		const editorWrapper = component.getByTestId("editor-wrapper");
+		const contentEditable = editorWrapper.locator('[contenteditable="true"]').first();
+		await contentEditable.click();
+
+		await page.keyboard.type("before `code` after");
+		await waitForInlineCodeCount(component, 1);
+
+		// Place cursor inside the InlineCodeNode (offset 3, between 'o' and 'd')
+		await setCursorAt(page, "code.inline-code .inline-code-inner", 3);
+		await page.keyboard.press("Enter");
+		await page.waitForTimeout(200);
+
+		// The inline code should be preserved intact in one of the paragraphs
+		await waitForInlineCodeCount(component, 1);
+
+		const codeElement = editorWrapper.locator("code.inline-code");
+		await expect(codeElement).toBeVisible();
+		await expect(codeElement).toHaveText("`code`");
 	});
 
 	test("should not create inline code for unmatched backtick", async ({ mount, page }) => {
