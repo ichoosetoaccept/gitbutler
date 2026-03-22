@@ -1382,4 +1382,3 @@ export type WorktreeChanges = {
   dependencies?: HunkDependencies | null;
   dependenciesError: SerdeError | null;
 };
-
