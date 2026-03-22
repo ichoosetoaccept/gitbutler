@@ -34,9 +34,10 @@ pub use repository_ext::{RepositoryExt, commit_with_signature_gix, commit_withou
 pub mod credentials;
 
 mod config;
+pub use but_hooks::hook_manager;
 use config::Config;
 pub mod hooks;
-pub mod managed_hooks;
+pub use but_hooks::managed_hooks;
 mod remote;
 pub mod staging;
 
