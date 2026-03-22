@@ -1,0 +1,25 @@
+[package]
+    authors.workspace     =true
+    edition.workspace     =true
+    name                  ="but-hooks"
+    publish               =false
+    rust-version.workspace=true
+    version               ="0.0.0"
+
+[lib]
+    doctest=false
+
+[dependencies]
+    but-core.workspace=true
+
+    anyhow.workspace =true
+    gix.workspace    =true
+    tracing.workspace=true
+    which.workspace  =true
+
+[dev-dependencies]
+    temp-env          ="0.3"
+    tempfile.workspace=true
+
+[lints]
+    workspace=true

@@ -61,6 +61,7 @@ GitButler project setup complete!
 Target branch: gb-local/main
 Remote: gb-local
 
+  ✓ Hooks already configured (pre-commit, post-checkout, pre-push)
 
 Setting up your project for GitButler tooling. Some things to note:
 
@@ -119,6 +120,7 @@ Setting up GitButler project...
 GitButler project is already set up!
 Target branch: gb-local/main
 
+  ✓ Hooks already configured (pre-commit, post-checkout, pre-push)
 
 
  ██████▄      ▄██████    ██████╗ ██╗   ██╗████████╗

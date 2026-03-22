@@ -30,3 +30,27 @@ fn works_on_integration_branch() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// Ensures the workspace-update path honors the persisted managed-hook installation opt-out.
+#[test]
+fn update_workspace_commit_skips_hooks_when_disabled_in_git_config() -> anyhow::Result<()> {
+    let (ctx, _temp_dir) =
+        crate::driverless::writable_context("for-workspace-migration.sh", "workspace-migration")?;
+
+    let repo = ctx.repo.get()?;
+    gitbutler_repo::managed_hooks::set_install_managed_hooks_enabled(&repo, false)?;
+    let hooks_dir = gitbutler_repo::managed_hooks::get_hooks_dir_gix(&repo);
+    drop(repo);
+
+    update_workspace_commit(&ctx, false)?;
+
+    assert!(
+        !hooks_dir.join("pre-commit").exists(),
+        "pre-commit should not be installed when managed hooks are disabled"
+    );
+    assert!(
+        !hooks_dir.join("post-checkout").exists(),
+        "post-checkout should not be installed when managed hooks are disabled"
+    );
+    Ok(())
+}
