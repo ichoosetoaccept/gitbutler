@@ -1,0 +1,351 @@
+use crate::utils::{CommandExt as _, Sandbox};
+
+#[test]
+fn status_shows_managed_hooks_after_setup() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // Setup installs managed hooks
+    env.but("setup")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![]);
+
+    // Hook status should show all 3 hooks as GitButler-managed
+    env.but("hook status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+
+Hook status
+
+  Hooks path:[..]
+  Config:[..]gitbutler.installHooks = true
+  Mode:[..]GitButler-managed
+
+  pre-commit:[..]GitButler-managed
+  post-checkout:[..]GitButler-managed
+  pre-push:[..]GitButler-managed
+
+
+"#]])
+        .stderr_eq(snapbox::str![]);
+
+    Ok(())
+}
+
+#[test]
+fn status_shows_disabled_after_no_hooks() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // Setup with --no-hooks disables hook installation
+    env.but("setup --no-hooks")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![]);
+
+    env.but("hook status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+
+Hook status
+
+  Hooks path:          ./.git/hooks
+  Config:              gitbutler.installHooks = false
+  Mode:                disabled
+
+  pre-commit:          ✗ not installed
+  post-checkout:       ✗ not installed
+  pre-push:            ✗ not installed
+
+  → Run `but setup --force-hooks` to re-enable GitButler-managed hooks.
+
+
+"#]])
+        .stderr_eq(snapbox::str![]);
+
+    Ok(())
+}
+
+#[test]
+fn no_hooks_flag_leaves_no_managed_hook_files_on_disk() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // `but setup --no-hooks` writes installHooks=false then switches to workspace.
+    // The workspace switch internally calls ensure_managed_hooks(force=false) which
+    // may read a stale config snapshot. This test confirms that the --no-hooks flag
+    // results in NO GitButler-managed hook files on disk regardless of config staleness.
+    env.but("setup --no-hooks")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![]);
+
+    let hooks_dir = env.projects_root().join(".git/hooks");
+    for hook_name in &["pre-commit", "post-checkout", "pre-push"] {
+        let hook_path = hooks_dir.join(hook_name);
+        if hook_path.exists() {
+            let content = std::fs::read_to_string(&hook_path)?;
+            assert!(
+                !content.contains("GITBUTLER_MANAGED_HOOK_V1"),
+                "{hook_name} should NOT contain GitButler signature after --no-hooks, got: {content}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn status_shows_unconfigured_for_fresh_repo() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // No setup — fresh repo with no hooks
+    env.but("hook status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+
+Hook status
+
+  Hooks path:          ./.git/hooks
+  Config:              gitbutler.installHooks = true
+  Mode:                unconfigured
+
+  pre-commit:          ✗ not installed
+  post-checkout:       ✗ not installed
+  pre-push:            ✗ not installed
+
+  → Run `but setup` to install GitButler hooks.
+
+
+"#]])
+        .stderr_eq(snapbox::str![]);
+
+    Ok(())
+}
+
+#[test]
+fn status_shows_user_hook() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // Create a plain user hook (not GitButler-managed)
+    env.invoke_bash("mkdir -p .git/hooks && echo '#!/bin/sh\necho hello' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit");
+
+    env.but("hook status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+
+Hook status
+
+  Hooks path:          ./.git/hooks
+  Config:              gitbutler.installHooks = true
+  Mode:                unconfigured
+
+  pre-commit:          ○ user hook
+  post-checkout:       ✗ not installed
+  pre-push:            ✗ not installed
+
+  → Run `but setup` to install GitButler hooks.
+
+
+"#]])
+        .stderr_eq(snapbox::str![]);
+
+    Ok(())
+}
+
+#[test]
+fn status_shows_custom_hooks_path() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // Setup first to install managed hooks in .git/hooks/
+    env.but("setup")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![]);
+
+    // Set core.hooksPath to a custom directory and install hooks there
+    env.invoke_bash("mkdir -p .git/custom-hooks");
+    env.invoke_git("config --local core.hooksPath .git/custom-hooks");
+
+    env.but("hook status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+
+Hook status
+
+  Hooks path:[..]custom-hooks
+[..]core.hooksPath[..]
+  Config:              gitbutler.installHooks = true
+  Mode:                unconfigured
+
+  pre-commit:          ✗ not installed
+  post-checkout:       ✗ not installed
+  pre-push:            ✗ not installed
+
+  ⚠ Orphaned GitButler-managed hooks found in ./.git/hooks (core.hooksPath points elsewhere)
+  → Run `but setup` to install GitButler hooks.
+  → Remove orphaned hooks: rm .git/hooks/pre-commit .git/hooks/post-checkout .git/hooks/pre-push
+
+
+"#]])
+        .stderr_eq(snapbox::str![]);
+
+    Ok(())
+}
+
+#[test]
+fn status_warns_about_orphaned_hooks() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // Setup installs managed hooks in .git/hooks/
+    env.but("setup")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![]);
+
+    // Redirect core.hooksPath elsewhere — old hooks are now orphaned
+    env.invoke_bash("mkdir -p .git/custom-hooks");
+    env.invoke_git("config --local core.hooksPath .git/custom-hooks");
+
+    env.but("hook status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+
+Hook status
+
+  Hooks path:          ./.git/custom-hooks
+                       (set via core.hooksPath)
+  Config:              gitbutler.installHooks = true
+  Mode:                unconfigured
+
+  pre-commit:          ✗ not installed
+  post-checkout:       ✗ not installed
+  pre-push:            ✗ not installed
+
+  ⚠ Orphaned GitButler-managed hooks found in ./.git/hooks (core.hooksPath points elsewhere)
+  → Run `but setup` to install GitButler hooks.
+  → Remove orphaned hooks: rm .git/hooks/pre-commit .git/hooks/post-checkout .git/hooks/pre-push
+
+
+"#]])
+        .stderr_eq(snapbox::str![]);
+
+    Ok(())
+}
+
+#[test]
+fn status_json_output() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // Setup installs managed hooks
+    env.but("setup")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![]);
+
+    let output = env.but("--json hook status").allow_json().output()?;
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(json["configEnabled"], true);
+    assert_eq!(json["mode"], "managed");
+    assert_eq!(json["customHooksPath"], false);
+    assert!(json["externalManager"].is_null());
+
+    let hooks = json["hooks"].as_array().expect("hooks should be an array");
+    assert_eq!(hooks.len(), 3);
+    assert_eq!(hooks[0]["name"], "pre-commit");
+    assert_eq!(hooks[0]["exists"], true);
+    assert_eq!(hooks[0]["owner"], "gitbutler");
+
+    Ok(())
+}
+
+#[test]
+fn status_detects_config_only_external_manager() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // Simulate prek configured + available locally, but hooks not yet installed.
+    // This mirrors the state after `uv add --dev prek` + creating prek.toml,
+    // before running `prek install`.
+    env.invoke_bash("echo '# prek config' > prek.toml");
+    env.invoke_bash(
+        "mkdir -p .venv/bin && echo '#!/bin/sh' > .venv/bin/prek && chmod +x .venv/bin/prek",
+    );
+
+    env.but("hook status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+
+Hook status
+
+  Hooks path:          ./.git/hooks
+  Config:              gitbutler.installHooks = true
+  Mode:                external hook manager
+  Hook manager:        prek
+
+  pre-commit:          ✗ external (prek)
+  post-checkout:       ✗ external (prek)
+  pre-push:            ✗ external (prek)
+
+  → Hooks are managed by prek. Use `but hook pre-commit` etc. in your prek config.
+
+
+"#]])
+        .stderr_eq(snapbox::str![]);
+
+    Ok(())
+}
+
+#[test]
+fn status_shell_output_includes_manager_name_per_hook() -> anyhow::Result<()> {
+    let env = Sandbox::open_with_default_settings("repo-no-remote")?;
+
+    // Simulate prek configured + available locally (same setup as config-only test).
+    env.invoke_bash("echo '# prek config' > prek.toml");
+    env.invoke_bash(
+        "mkdir -p .venv/bin && echo '#!/bin/sh' > .venv/bin/prek && chmod +x .venv/bin/prek",
+    );
+
+    // Shell output must include the manager name in per-hook fields, not just "external".
+    env.but("--format shell hook status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+hooks_path='[..]'
+custom_hooks_path=false
+config_enabled=true
+mode='external hook manager'
+external_manager='prek'
+hook_pre_commit='external (prek)'
+hook_post_checkout='external (prek)'
+hook_pre_push='external (prek)'
+
+"#]])
+        .stderr_eq(snapbox::str![]);
+
+    Ok(())
+}
+
+#[test]
+fn status_fails_outside_git_repo() -> anyhow::Result<()> {
+    let env = Sandbox::empty()?;
+
+    env.but("hook status")
+        .assert()
+        .failure()
+        .stderr_eq(snapbox::str![[r#"
+Error: "." does not appear to be a git repository
+
+Caused by:
+    Missing HEAD at '.git/HEAD'
+
+"#]]);
+
+    Ok(())
+}
