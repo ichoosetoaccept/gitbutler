@@ -764,6 +764,7 @@ dependencies = [
  "but-github",
  "but-gitlab",
  "but-graph",
+ "but-hooks",
  "but-hunk-assignment",
  "but-installer",
  "but-llm",
@@ -1256,6 +1257,19 @@ dependencies = [
  "itertools",
  "petgraph",
  "tracing",
+]
+
+[[package]]
+name = "but-hooks"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "but-core",
+ "gix",
+ "temp-env",
+ "tempfile",
+ "tracing",
+ "which",
 ]
 
 [[package]]
@@ -4136,6 +4150,7 @@ dependencies = [
  "but-ctx",
  "but-error",
  "but-gerrit",
+ "but-hooks",
  "but-oxidize",
  "but-settings",
  "fuzzy-matcher",
@@ -4156,7 +4171,6 @@ dependencies = [
  "scopeguard",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
